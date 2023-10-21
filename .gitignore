@@ -1,0 +1,12 @@
+*.csv
+*.log
+*.out
+*.ipynb
+*.txt
+/code/CNN/
+/code/helper/ 
+/code/EDA/ 
+/code/XGBoost/ 
+/data/large_sample/
+/data/small_sample/
+
