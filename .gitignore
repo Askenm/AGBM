@@ -4,6 +4,9 @@
 *.ipynb
 *.txt
 *.tif
+*.pt
+*.png
+*.pyc
 /code/CNN/
 /code/helper/ 
 /code/EDA/ 
