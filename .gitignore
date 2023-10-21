@@ -3,6 +3,7 @@
 *.out
 *.ipynb
 *.txt
+*.tif
 /code/CNN/
 /code/helper/ 
 /code/EDA/ 
