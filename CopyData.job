@@ -1,0 +1,14 @@
+#!/bin/bash
+
+#SBATCH --job-name=CARBON_GPU_refactor_test        # Job name
+#SBATCH --output=HPC_output/job.%j.out	 # Name of output file (%j expands to jobId)
+#SBATCH --cpus-per-task=10        # Schedule one core
+#SBATCH --nodes 1
+#SBATCH --time=2:00:00          # Run time (hh:mm:ss) - run for one hour max
+#SBATCH --partition=brown #red #brown    # Run on either the Red or Brown queue
+#SBATCH --mail-type=END,BEGIN 
+#SBATCH --nodelist=desktop17
+
+# Print out the hostname of the node the job is running on #SBATCH --gres=gpu 
+##SBATCH --nodelist=cn1,desktop17,cn2 #,cn4#,cn5 #desktop1,desktop2,desktop3,desktop4,desktop5,desktop6,desktop7,desktop8,desktop9
+python3 run_experiment.py XGBoost 5 parameters/XGBoost_tuning.json 
