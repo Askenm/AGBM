@@ -198,5 +198,8 @@ class SKLearn_DataHelper():
         viz.plot_performance_scatter(df=chip_dict['worst'],
                                      rmse=chip_dict['worst_chip_perf'],
                                      savedir=worst_dir)
+        
+
+        viz.compare_best_models()
 
 

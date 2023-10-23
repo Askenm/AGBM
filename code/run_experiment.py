@@ -16,6 +16,9 @@ import torch
 # Helpers
 from sklearn_helpers import SKLearn_DataHelper as SKDH
 from pytorch_helpers import PyTorch_DataHelper as PTDH
+import torch.nn as nn
+import torch.optim as optim
+import parser
 
 
 # Models
@@ -25,7 +28,10 @@ import xgboost as xgb
 
 # Performance Metrics
 from carbontracker.tracker import CarbonTracker
+from carbontracker.exceptions import CarbonIntensityFetcherError
 from sklearn.metrics import mean_squared_error
+
+
 
 
 class ABGM_Experiment():
@@ -63,6 +69,7 @@ class ABGM_Experiment():
         self.test_path  = '../data/sample_files/test_data.csv'
 
         self.num_folds = 5
+        self.num_epochs = 100
 
 
         
@@ -75,8 +82,8 @@ class ABGM_Experiment():
                    'ST-CNN':1,
                    'XGBoost':65536}
 
-        device_mapping = {'CNN':'gpu',
-                   'ST-CNN':'gpu',
+        device_mapping = {'CNN':'cpu',
+                   'ST-CNN':'cpu',
                    'XGBoost':"cuda"}
 
         model_type_mapping = {'CNN':'neural',
@@ -213,7 +220,7 @@ class ABGM_Experiment():
         return X,y,dataset_dict
     
 
-    def create_spatial_datastructure(self,cap=0):
+    def create_spatial_datastructure(self,datapath,cap=0):
 
         self.DataHelper = PTDH()
 
@@ -290,17 +297,101 @@ class ABGM_Experiment():
         fold_path = self.experiment_dir+"training_data/fold_indexes/"
         os.mkdir(fold_path)
 
-        print('CREATING TEMPORAL TRAINING DATASTRUCTURES')
+        print('CREATING SPATIAL TRAINING DATASTRUCTURES')
 
         # Iterate over all split_types (train,dev)
         for split_type,folds in tqdm(self.fold2ids.items()):
 
             # Iterate over all folds (0,1,2,3,4)
             for fold,indexes in folds.items():
-                pass
 
+                cur_data_path = f'{fold_path}{fold}_{split_type}.csv'
+                
+                self.train_ids.loc[self.train_ids['chipid'].isin(indexes)].to_csv(cur_data_path)
+
+                X,y,data_dict = self.create_spatial_datastructure(cur_data_path,cap=500)
+
+                data_dict['features'] = f"{self.data_path}{fold}/{split_type}_X.pt"
+                data_dict['target'] = f"{self.data_path}{fold}/{split_type}_y.pt"
+
+                # Create directories for the current fold
+                if os.path.exists(f"{self.data_path}{fold}")==False:
+                    os.mkdir(f"{self.data_path}{fold}")
+
+                # Save the data matrices 
+                torch.save(X, data_dict['features'])
+                torch.save(y, data_dict['target'])
+
+                # Dump the dictionary to a JSON file
+                with open(f"{self.data_path}{fold}/{split_type}.json", 'w') as json_file:
+                    json.dump(data_dict, json_file)
+        
+
+
+        del X,y,data_dict
+
+        # Save the full dataset to be loaded for final performance
+        X,y,data_dict = self.create_spatial_datastructure(cur_data_path,cap=500)
+
+        # Save the data matrices 
+        torch.save(X, f"{self.data_path}full_X.pt")
+        torch.save(y, f"{self.data_path}full_y.pt")
+        del X,y,data_dict
+
+        print('CREATING THE TESTSET')
+        # Create the test set but save it in memory instead of to file
+        self.test_dict = self.DataHelper.create_dataset('../data/sample_files/test_data.csv')
+
+    
     def create_spatio_temporal_dataset(self):
-        pass
+        # Create the folder where training data is saved
+        fold_path = self.experiment_dir+"training_data/fold_indexes/"
+        os.mkdir(fold_path)
+
+        print('CREATING SPATIO-TEMPORAL TRAINING DATASTRUCTURES')
+
+        # Iterate over all split_types (train,dev)
+        for split_type,folds in tqdm(self.fold2ids.items()):
+
+            # Iterate over all folds (0,1,2,3,4)
+            for fold,indexes in folds.items():
+
+                cur_data_path = f'{fold_path}{fold}_{split_type}.csv'
+                
+                self.train_ids.loc[self.train_ids['chipid'].isin(indexes)].to_csv(cur_data_path)
+
+                X,y,data_dict = self.create_spatial_datastructure(cur_data_path,cap=500)
+
+                data_dict['features'] = f"{self.data_path}{fold}/{split_type}_X.pt"
+                data_dict['target'] = f"{self.data_path}{fold}/{split_type}_y.pt"
+
+                # Create directories for the current fold
+                if os.path.exists(f"{self.data_path}{fold}")==False:
+                    os.mkdir(f"{self.data_path}{fold}")
+
+                # Save the data matrices 
+                torch.save(X, data_dict['features'])
+                torch.save(y, data_dict['target'])
+
+                # Dump the dictionary to a JSON file
+                with open(f"{self.data_path}{fold}/{split_type}.json", 'w') as json_file:
+                    json.dump(data_dict, json_file)
+        
+
+
+        del X,y,data_dict
+
+        # Save the full dataset to be loaded for final performance
+        X,y,data_dict = self.create_spatial_datastructure(cur_data_path,cap=500)
+
+        # Save the data matrices 
+        torch.save(X, f"{self.data_path}full_X.pt")
+        torch.save(y, f"{self.data_path}full_y.pt")
+        del X,y,data_dict
+
+        print('CREATING THE TESTSET')
+        # Create the test set but save it in memory instead of to file
+        self.test_dict = self.DataHelper.create_dataset('../data/sample_files/test_data.csv')
 
     def create_data_representations(self):
         # Uses the fold2chipids to create the training, evaluation and test data in the correct representations
@@ -385,7 +476,17 @@ class ABGM_Experiment():
             return rmse, self.predictions
         else:
             return rmse
-            
+    
+
+    def evaluateTorch(self,model,X,y,verbose=False):
+        self.predictions = xgb_instance.predict(deval)
+
+        rmse = np.sqrt(mean_squared_error(eval_target,self.predictions))
+        
+        if verbose:
+            return rmse, self.predictions
+        else:
+            return rmse
 
     def train_sklearn_model(self):
         print('Initiating Training')
@@ -400,7 +501,8 @@ class ABGM_Experiment():
         # Setup CarbonTracker
         tracker = CarbonTracker(epochs=1,
                                 log_dir=f"{self.experiment_dir}/carbon_emissions/training",
-                                devices_by_pid=True)
+                                devices_by_pid=True,
+                                ignore_errors=True)
         
         tracker.epoch_start()
         
@@ -455,7 +557,8 @@ class ABGM_Experiment():
         # Setup CarbonTracker for inference
         tracker = CarbonTracker(epochs=1,
                                 log_dir=f"{self.experiment_dir}/carbon_emissions/inference",
-                                devices_by_pid=True)
+                                devices_by_pid=True,
+                                ignore_errors=True)
         
         tracker.epoch_start()
         # Load the full train set
@@ -484,7 +587,56 @@ class ABGM_Experiment():
                       .to_csv(self.experiment_dir+'estimates.csv')
 
 
+    
+    def neural_training_run(self,params,dataloader,evaluate=False,val_loader=None,output_preds=False):
+
+        model = CNN(**params)
+        model.to(self.device)
+
+        # Setup Torch Configs
+        criterion = nn.MSELoss(reduction="mean")
+        optimizer = optim.Adam(model.parameters(), lr=0.02)
         
+        for epoch in tqdm(range(self.num_epochs)):
+            predictions = []
+
+            running_loss = 0.0
+            losses = []
+            
+            val_losses = []
+            for i, (inputs, labels) in tqdm(enumerate(dataloader)):
+                inputs = inputs.to(self.device)
+                labels = labels.to(self.device)
+
+
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                running_loss += loss.item()
+                train_loss = np.round(np.sqrt(loss.item()), 5)
+                losses.append(train_loss)
+
+            if evaluate:
+                for i, (inputs, labels) in tqdm(enumerate(val_loader)):
+                    inputs = inputs.to(self.device)
+                    labels = labels.to(self.device)
+
+
+                    optimizer.zero_grad()
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    loss.backward()
+                    optimizer.step()
+                    running_loss += loss.item()
+                    val_loss = np.round(np.sqrt(loss.item()), 5)
+                    val_losses.append(val_loss)
+
+                    predictions.append(outputs)
+        
+        return losses,val_losses,predictions
+
 
 
 
@@ -501,17 +653,96 @@ class ABGM_Experiment():
         # Setup CarbonTracker
         tracker = CarbonTracker(epochs=1,
                                 log_dir=f"{self.experiment_dir}/carbon_emissions/training",
-                                devices_by_pid=True)
+                                devices_by_pid=True,
+                                ignore_errors=True)
         
         tracker.epoch_start()
+
         
         # Instantiate datastructure for performances on each fold for each parameter configuration
         param_performances = [[]]*len(param_permutations)
         print('TRAINING LOOP')
         for fold in tqdm(range(self.num_folds)):
-            # Load training data for fold
-            X_train = torch.load(f"{self.experiment_dir}training_data/{fold}/train_X.pt")
-            y_train = torch.load(f"{self.experiment_dir}training_data/{fold}/train_y.pt")
+
+            print("Creating DataLoaders for Fold #{}".format(fold))
+            train_loader = self.DataHelper.create_dataloaders_from_path(f"{self.experiment_dir}training_data/{fold}/train")
+            val_loader = self.DataHelper.create_dataloaders_from_path(f"{self.experiment_dir}training_data/{fold}/development")
+
+            for idx,params in tqdm(enumerate(param_permutations)):
+            
+                _,val_losses,_ = self.neural_training_run(params,train_loader,evaluate=True,val_loader=val_loader) 
+                
+                # Append the fold performance for the config to the datastructure
+                RMSE = np.mean(val_losses)
+                param_performances[idx].append(RMSE)
+
+
+        tracker.epoch_end()
+
+        # Free Up Memory
+        del train_loader,val_loader
+
+
+        # Average over folds for each parameter setting getting the mean RMSE for the config
+        aggregated_performances = [np.mean(param_folds) for param_folds in param_performances]
+        
+        # Get the index of the best setting
+        best_param_index = np.argmin(aggregated_performances)
+        
+        # Get the best training performance on the dev set
+        self.train_RMSE = aggregated_performances[best_param_index]
+
+        # Get the parameter setting yielding the best dev performance
+        best_params = param_permutations[best_param_index]
+        self.best_params = best_params
+
+        # Setup CarbonTracker for inference
+        tracker = CarbonTracker(epochs=1,
+                                log_dir=f"{self.experiment_dir}/carbon_emissions/inference",
+                                devices_by_pid=True,
+                                ignore_errors=True)
+        
+        tracker.epoch_start()
+
+
+        # Load the full train set
+        full_dataloader = self.DataHelper.create_dataloaders_from_path(f"{self.data_path}full")
+
+        # Create Test dataloader
+        test_data = torch.utils.data.TensorDataset(self.test_dict['features'], self.test_dict['target'])
+
+        test_loader = torch.utils.data.DataLoader(
+            test_data, batch_size=12, shuffle=False
+        )
+
+        # Fit the model to the full trainset
+        _,rmses,predictions = self.neural_training_run(self.best_params,
+                                                       full_dataloader,
+                                                       evaluate=True,
+                                                       val_loader=test_loader,
+                                                       output_preds = True)
+        
+        del full_dataloader
+
+        predictions = self.DataHelper.reshape_predictions(predictions,device = self.device)
+        
+        # Evaluate final model on test data
+        self.test_RMSE = np.mean(rmses)
+
+
+        # End Inference carbion tracking 
+        tracker.epoch_end()
+
+        self.test_dict['target'] = self.test_dict['target'].flatten().detach().numpy()
+
+        # Save predictions along with ground truth data
+        pd.DataFrame({'predicted':predictions,
+                      'ground_truth':self.test_dict['target']})\
+                      .to_csv(self.experiment_dir+'estimates.csv')
+
+
+                
+                    
 
 
 
@@ -521,29 +752,31 @@ class ABGM_Experiment():
         Small function for running the two possible visualization cases.
         One for tabular cases, where the original data needs to be reconstructed and one for 2D cases. 
         """
-        if self.model == 'XGBoost':
-            # Get the chip_dict for plotting
-            chip_dict = self.DataHelper.find_best_and_worst_chip(self.experiment_dir)
+        
+        # Get the chip_dict for plotting
+        chip_dict = self.DataHelper.find_best_and_worst_chip(self.experiment_dir)
 
-            # Create all relevant plots
-            self.DataHelper.run_all_plots(chip_dict,self.test_dict,self.experiment_dir)
+        # Create all relevant plots
+        self.DataHelper.run_all_plots(chip_dict,self.test_dict,self.experiment_dir)
 
-        else:
-            pass
-
+    
 
     def save_results(self):
         """
         Saves the performance of the model_run to the global lookup table
         """
+
+        _,carbon_train,_ = parser.aggregate_consumption(f'{self.experiment_dir}/carbon_emissions/training')
+        _,carbon_test,_ = parser.aggregate_consumption(f'{self.experiment_dir}/carbon_emissions/inference')
+
         row = {'runID':[self.experiment_start_time],
                 'model':[self.model],
                 'number_of_chips':[self.num_dpoints],
                 'parameters':[self.best_params],
                 'RMSE_train':[self.train_RMSE],
                 'RMSE_test':[self.test_RMSE],
-                'carbon_development':[0],
-                'carbon_inference':[0]}
+                'carbon_development':[carbon_train],
+                'carbon_inference':[carbon_test]}
 
         pd.DataFrame(row).to_csv('results/overall_performances.csv',header=False,index=None,mode='a',sep=';')
 
